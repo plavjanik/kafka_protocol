@@ -15,7 +15,7 @@
 
 -module(kpro).
 
-%% help apis to constricut kpro_Xxx structures.
+%% help apis to build some of most common kpro_Xxx structures.
 -export([ fetch_request/6
         , offset_request/4
         , produce_request/5

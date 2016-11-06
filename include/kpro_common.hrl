@@ -19,7 +19,7 @@
 -define(kpro_common_hrl, true).
 
 -ifndef(KAFKA_VERSION).
--define(KAFKA_VERSION, {0,9,0}). %% by default
+-define(KAFKA_VERSION, {0,10,1}). %% by default
 -endif.
 
 -type kpro_compress_option() :: no_compression | gzip | snappy | lz4.
