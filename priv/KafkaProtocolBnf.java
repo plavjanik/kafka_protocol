@@ -5,11 +5,14 @@ import org.apache.kafka.common.protocol.types.Field;
 import org.apache.kafka.common.protocol.types.Schema;
 import org.apache.kafka.common.protocol.types.Type;
 import org.apache.kafka.common.protocol.Protocol;
+import org.apache.commons.lang3.text.WordUtils;
 
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.StringTokenizer;
+
 
 public class KafkaProtocolBnf {
     private static String indentString(int size) {
@@ -17,6 +20,16 @@ public class KafkaProtocolBnf {
         for (int i = 0; i < size; i++)
             b.append(" ");
         return b.toString();
+    }
+
+    private static String underscoreToCamelCase(String text) {
+        StringTokenizer token = new StringTokenizer(text, "_");
+        StringBuilder str = new StringBuilder(token.nextToken());
+        while (token.hasMoreTokens()) {
+            String s = token.nextToken();
+            str.append(Character.toUpperCase(s.charAt(0))).append(s.substring(1));
+        }
+        return str.toString();
     }
 
     private static void populateSchemaFields(Schema schema, Set<Field> fields) {
@@ -39,21 +52,22 @@ public class KafkaProtocolBnf {
         int index = 0;
         int length = schema.fields().length;
         for (Field field: schema.fields()) {
+            String fieldName = WordUtils.capitalize(underscoreToCamelCase(field.name));
             if (field.type instanceof ArrayOf) {
                 b.append("[");
-                b.append(field.name);
+                b.append(fieldName);
                 b.append("]");
                 Type innerType = ((ArrayOf) field.type).type();
-                if (!subTypes.containsKey(field.name))
-                    subTypes.put(field.name, innerType);
+                if (!subTypes.containsKey(fieldName))
+                    subTypes.put(fieldName, innerType);
             } else if (field.type instanceof Schema) {
-                b.append(field.name);
-                if (!subTypes.containsKey(field.name))
-                    subTypes.put(field.name, field.type);
+                b.append(fieldName);
+                if (!subTypes.containsKey(fieldName))
+                    subTypes.put(fieldName, field.type);
             } else {
-                b.append(field.name);
-                if (!subTypes.containsKey(field.name))
-                    subTypes.put(field.name, field.type);
+                b.append(fieldName);
+                if (!subTypes.containsKey(fieldName))
+                    subTypes.put(fieldName, field.type);
             }
             if (index < (length - 1))
                 b.append(" ");
@@ -88,7 +102,7 @@ public class KafkaProtocolBnf {
             if (field.doc.isEmpty())
                 continue;
             b.append("# ");
-            b.append(field.name);
+            b.append(WordUtils.capitalize(underscoreToCamelCase(field.name)));
             b.append(": ");
             b.append(field.doc);
             b.append("\n");
@@ -98,9 +112,9 @@ public class KafkaProtocolBnf {
 
     public static String toText() {
         final StringBuilder b = new StringBuilder();
-        b.append("Packet => size payload\n");
-        b.append("  size => int32\n");
-        b.append("  payload => Request | Response\n");
+        b.append("Packet => Size Payload\n");
+        b.append("  Size => int32\n");
+        b.append("  Payload => Request | Response\n");
         b.append("\n");
         b.append("Request => RequestHeader RequestMessage\n");
         b.append("  RequestMessage => ");

@@ -3,7 +3,7 @@ Definitions.
 Rules.
 
 [A-Z][0-9a-zA-Z]* : {token, {name, TokenLine, list_to_atom(TokenChars)}}.
-[a-z][0-9a-zA-Z]* : {token, {prim, TokenLine, list_to_atom(TokenChars)}}.
+[a-z][0-9a-zA-Z_]* : {token, {prim, TokenLine, list_to_atom(TokenChars)}}.
 => : {token, {'=>', TokenLine}}.
 \[ : {token, {'[', TokenLine}}.
 \] : {token, {']', TokenLine}}.
