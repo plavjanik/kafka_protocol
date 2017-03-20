@@ -1,0 +1,13 @@
+{
+        "name" : "kafka_protocol",
+        "deps" : [
+            {
+                "name" : "snappyer",
+                "url" : "https://github.com/zmstone/snappyer",
+                "vsn" : "1.2.0"
+            }
+        ],
+        "prebuild" : [
+            {"shell" : "priv/kpro_gen.escript"}
+        ]
+    }
