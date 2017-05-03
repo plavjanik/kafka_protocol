@@ -16,12 +16,22 @@ Response => CorrelationId ResponseMessage
   CorrelationId => int32
   ResponseMessage => ProduceResponse | FetchResponse | OffsetResponse | MetadataResponse | OffsetCommitResponse | OffsetFetchResponse | GroupCoordinatorResponse | JoinGroupResponse | HeartbeatResponse | LeaveGroupResponse | SyncGroupResponse | DescribeGroupsResponse | ListGroupsResponse | SaslHandshakeResponse
 
-Message => Offset MessageSize Crc MagicByte Attributes Key Value
+MessageV0 => Offset MessageSize Crc MagicByte Attributes Key Value
   Offset => int64
   MessageSize => int32
   Crc => int32
   MagicByte => int8
   Attributes => int8
+  Key => bytes
+  Value => bytes
+
+MessageV1 => Offset MessageSize Crc MagicByte Attributes Timestamp Key Value
+  Offset => int64
+  MessageSize => int32
+  Crc => int32
+  MagicByte => int8
+  Attributes => int8
+  Timestamp => int64
   Key => bytes
   Value => bytes
 
@@ -44,7 +54,10 @@ MetadataResponse => [Broker] [TopicMetadata]
 
 ProduceRequest => RequiredAcks Timeout [TopicMessageSet]
   TopicMessageSet => TopicName [PartitionMessageSet]
-  PartitionMessageSet => Partition MessageSetSize [Message]
+  PartitionMessageSet => Partition MessageSetSize MessageSet
+  MessageSet => MessageSetV0 | MessageSetV1
+  MessageSetV0 => [MessageV0]
+  MessageSetV1 => [MessageV1]
   RequiredAcks => int16
   Timeout => int32
   Partition => int32
@@ -72,7 +85,7 @@ FetchRequest => ReplicaId MaxWaitTime MinBytes [FetchRequestTopic]
 
 FetchResponse => [FetchResponseTopic]
   FetchResponseTopic => TopicName [FetchResponsePartition]
-  FetchResponsePartition => Partition ErrorCode HighWatermarkOffset MessageSetSize [Message]
+  FetchResponsePartition => Partition ErrorCode HighWatermarkOffset MessageSetSize [MessageV0]
   TopicName => string
   Partition => int32
   ErrorCode => int16

@@ -76,13 +76,14 @@
 -type topic()     :: str().
 -type partition() :: int32().
 -type offset()    :: int64().
+-type timestamp()    :: int64().
 
 -type key() :: undefined | iodata().
--type value() :: undefined | iodata() | [{key(), kv_list()}].
--type kv_list() :: [{key(), value()}].
+-type value() :: undefined | iodata() | [{key(), kv_list()}] | [{timestamp(), key(), kv_list()}].
+-type kv_list() :: [{key(), value()}] | [{timestamp(), key(), value()}].
 
 -type kafka_key() :: key().
--type kafka_value() :: undefined | iodata() | [kpro_Message()].
+-type kafka_value() :: undefined | iodata() | [kpro_MessageV0()].
 
 -type incomplete_message() :: {?incomplete_message, int32()}.
 
@@ -149,16 +150,20 @@ produce_request(Topic, Partition, KvList, RequiredAcks, AckTimeout) ->
 produce_request(Topic, Partition, KvList,
                 RequiredAcks, AckTimeout, CompressOption) ->
   Messages = encode_messages(KvList, CompressOption),
+  MessageSet = case message_format(Messages) of
+    1 -> #kpro_MessageSetV1{ messageV1_L = Messages };
+    _ -> #kpro_MessageSetV0{ messageV0_L = Messages }
+  end,
   PartitionMsgSet =
     #kpro_PartitionMessageSet{ partition = Partition
-                             , message_L = Messages
+                             , messageSet = MessageSet
                              },
   TopicMessageSet =
     #kpro_TopicMessageSet{ topicName             = Topic
                          , partitionMessageSet_L = [PartitionMsgSet]
                          },
   %% Encode message set here right now.
-  %% Instead of keeping a possibily very large array
+  %% Instead of keeping a possibly very large array
   %% and passing it around processes
   %% e.g. in brod, the message set can be encoded in producer
   %% worker before sending it down to socket process
@@ -167,6 +172,13 @@ produce_request(Topic, Partition, KvList,
                       , timeout           = AckTimeout
                       , topicMessageSet_L = {already_encoded, MessageSetBin}
                       }.
+
+message_format([#kpro_MessageV0{} | _]) -> 0;
+message_format([#kpro_MessageV1{} | _]) -> 1;
+message_format([]) -> 0.
+
+message_set_encoded_message(#kpro_MessageSetV0{messageV0_L = Encoded}) -> Encoded;
+message_set_encoded_message(#kpro_MessageSetV1{messageV1_L = Encoded}) -> Encoded.
 
 %% @doc Get the next correlation ID.
 -spec next_corr_id(corr_id()) -> corr_id().
@@ -256,12 +268,23 @@ encode_messages([{_K, [{_NestedK, _NestedV} | _] = NestedKvList} | KvList]) ->
   [ encode_messages(NestedKvList)
   | encode_messages(KvList)
   ];
+encode_messages([{_T, _K, [{_NestedK, _NestedV} | _] = NestedKvList} | KvList]) ->
+  [ encode_messages(NestedKvList)
+  | encode_messages(KvList)
+  ];
 encode_messages([{K, V} | KvList]) ->
-  Msg = #kpro_Message{ attributes = ?KPRO_COMPRESS_NONE
-                     , key        = K
-                     , value      = V
-                     },
-  [encode(Msg) | encode_messages(KvList)].
+  Msg = #kpro_MessageV0{ attributes = ?KPRO_COMPRESS_NONE
+                       , key        = K
+                       , value      = V
+                       },
+  [encode(Msg) | encode_messages(KvList)];
+encode_messages([{T, K, V} | KvList]) ->
+    Msg = #kpro_MessageV1{ attributes = ?KPRO_COMPRESS_NONE
+        , timestamp  = T
+        , key        = K
+        , value      = V
+    },
+    [encode(Msg) | encode_messages(KvList)].
 
 compress(Method, IoData) ->
   Attributes = case Method of
@@ -269,10 +292,10 @@ compress(Method, IoData) ->
                  snappy -> ?KPRO_COMPRESS_SNAPPY;
                  lz4    -> ?KPRO_COMPRESS_LZ4
                end,
-  Msg = #kpro_Message{ attributes = Attributes
-                     , key        = <<>>
-                     , value      = do_compress(Method, IoData)
-                     },
+  Msg = #kpro_MessageV0{ attributes = Attributes
+                       , key        = <<>>
+                       , value      = do_compress(Method, IoData)
+                       },
   [encode(Msg)].
 
 
@@ -359,25 +382,26 @@ encode({array, L}) when is_list(L) ->
   [<<Length:32/?INT>>, [encode(I) || I <- L]];
 encode(#kpro_PartitionMessageSet{} = R) ->
   %% messages in messageset is a stream, not an array
-  EncodedMessages = R#kpro_PartitionMessageSet.message_L,
+  MessageSet = R#kpro_PartitionMessageSet.messageSet,
+  EncodedMessages = message_set_encoded_message(MessageSet),
   Size = data_size(EncodedMessages),
   [encode({int32, R#kpro_PartitionMessageSet.partition}),
    encode({int32, Size}),
    EncodedMessages
   ];
-encode(#kpro_Message{} = R) ->
-  MagicByte = case R#kpro_Message.magicByte of
-                undefined            -> ?KPRO_MAGIC_BYTE;
+encode(#kpro_MessageV0{} = R) ->
+  MagicByte = case R#kpro_MessageV0.magicByte of
+                undefined            -> ?KPRO_MAGIC_BYTE_V0;
                 M when is_integer(M) -> M
               end,
-  Attributes = case R#kpro_Message.attributes of
+  Attributes = case R#kpro_MessageV0.attributes of
                  undefined            -> ?KPRO_ATTRIBUTES;
                  A when is_integer(A) -> A
                end,
   Body = [ encode({int8, MagicByte})
          , encode({int8, Attributes})
-         , encode({bytes, R#kpro_Message.key})
-         , encode({bytes, R#kpro_Message.value})
+         , encode({bytes, R#kpro_MessageV0.key})
+         , encode({bytes, R#kpro_MessageV0.value})
          ],
   Crc  = encode({int32, erlang:crc32(Body)}),
   Size = data_size([Crc, Body]),
@@ -385,6 +409,27 @@ encode(#kpro_Message{} = R) ->
    encode({int32, Size}),
    Crc, Body
   ];
+encode(#kpro_MessageV1{} = R) ->
+    MagicByte = case R#kpro_MessageV1.magicByte of
+                    undefined            -> ?KPRO_MAGIC_BYTE_V1;
+                    M when is_integer(M) -> M
+                end,
+    Attributes = case R#kpro_MessageV1.attributes of
+                     undefined            -> ?KPRO_ATTRIBUTES;
+                     A when is_integer(A) -> A
+                 end,
+    Body = [ encode({int8, MagicByte})
+        , encode({int8, Attributes})
+        , encode({int64, R#kpro_MessageV1.timestamp})
+        , encode({bytes, R#kpro_MessageV1.key})
+        , encode({bytes, R#kpro_MessageV1.value})
+    ],
+    Crc  = encode({int32, erlang:crc32(Body)}),
+    Size = data_size([Crc, Body]),
+    [encode({int64, -1}),
+        encode({int32, Size}),
+        Crc, Body
+    ];
 encode(#kpro_GroupAssignment{memberAssignment = MA} = GA) ->
   case MA of
     #kpro_ConsumerGroupMemberAssignment{} ->
@@ -446,7 +491,7 @@ decode(kpro_FetchResponsePartition, Bin) ->
       , errorCode           = kpro_ErrorCode:decode(ErrorCode)
       , highWatermarkOffset = HighWmOffset
       , messageSetSize      = MessageSetSize
-      , message_L           = MessageSetBin
+      , messageV0_L         = MessageSetBin
       },
   {PartitionMessages, Rest};
 decode(StructName, Bin) when is_atom(StructName) ->
@@ -454,7 +499,7 @@ decode(StructName, Bin) when is_atom(StructName) ->
 
 %% @private
 -spec decode_message(binary()) ->
-        {kpro_Message() | incomplete_message(), binary()}.
+        {kpro_MessageV0() | incomplete_message(), binary()}.
 decode_message(<<_Offset:64/?INT, MsgSize:32/?INT, T/binary>> = Bin) ->
   case size(T) < MsgSize of
     true  -> {{?incomplete_message, MsgSize + 12}, <<>>};
@@ -468,7 +513,7 @@ decode_message(_) ->
 %% Return messages in reversed order.
 %% @end
 -spec decode_message_stream(binary(), Decoded) -> Decoded
-        when Decoded :: [kpro_Message() | incomplete_message()].
+        when Decoded :: [kpro_MessageV0() | incomplete_message()].
 decode_message_stream(<<>>, Acc) ->
   %% Do not reverse here!
   %% as the input is recursive when compressed
@@ -477,12 +522,12 @@ decode_message_stream(Bin, Acc) ->
   {Msg, Rest} = decode_message(Bin),
   NewAcc =
     case Msg of
-      #kpro_Message{attributes = Attr} = Msg when ?KPRO_IS_GZIP_ATTR(Attr) ->
-        decode_message_stream(zlib:gunzip(Msg#kpro_Message.value), Acc);
-      #kpro_Message{attributes = Attr} = Msg when ?KPRO_IS_SNAPPY_ATTR(Attr) ->
-        decode_message_stream(java_snappy_unpack(Msg#kpro_Message.value), Acc);
-      #kpro_Message{attributes = Attr} = Msg when ?KPRO_IS_LZ4_ATTR(Attr) ->
-        decode_message_stream(lz4_unpack(Msg#kpro_Message.value), Acc);
+      #kpro_MessageV0{attributes = Attr} = Msg when ?KPRO_IS_GZIP_ATTR(Attr) ->
+        decode_message_stream(zlib:gunzip(Msg#kpro_MessageV0.value), Acc);
+      #kpro_MessageV0{attributes = Attr} = Msg when ?KPRO_IS_SNAPPY_ATTR(Attr) ->
+        decode_message_stream(java_snappy_unpack(Msg#kpro_MessageV0.value), Acc);
+      #kpro_MessageV0{attributes = Attr} = Msg when ?KPRO_IS_LZ4_ATTR(Attr) ->
+        decode_message_stream(lz4_unpack(Msg#kpro_MessageV0.value), Acc);
       _Else ->
         [Msg | Acc]
     end,
@@ -617,3 +662,5 @@ snappy_decompress(_BinData) ->
 %%% allout-layout: t
 %%% erlang-indent-level: 2
 %%% End:
+
+
