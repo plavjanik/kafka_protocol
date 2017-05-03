@@ -150,9 +150,9 @@ produce_request(Topic, Partition, KvList, RequiredAcks, AckTimeout) ->
 produce_request(Topic, Partition, KvList,
                 RequiredAcks, AckTimeout, CompressOption) ->
   Messages = encode_messages(KvList, CompressOption),
-  MessageSet = case message_format(Messages) of
-    1 -> #kpro_MessageSetV1{ messageV1_L = Messages };
-    _ -> #kpro_MessageSetV0{ messageV0_L = Messages }
+  MessageSet = case {CompressOption, message_format(KvList)} of
+                   {no_compression, 1} -> #kpro_MessageSetV1{ messageV1_L = Messages };
+                   _ -> #kpro_MessageSetV0{ messageV0_L = Messages }
   end,
   PartitionMsgSet =
     #kpro_PartitionMessageSet{ partition = Partition
@@ -173,9 +173,8 @@ produce_request(Topic, Partition, KvList,
                       , topicMessageSet_L = {already_encoded, MessageSetBin}
                       }.
 
-message_format([#kpro_MessageV0{} | _]) -> 0;
-message_format([#kpro_MessageV1{} | _]) -> 1;
-message_format([]) -> 0.
+message_format([{_, _} | _]) -> 0;
+message_format([{_, _, _} | _]) -> 1.
 
 message_set_encoded_message(#kpro_MessageSetV0{messageV0_L = Encoded}) -> Encoded;
 message_set_encoded_message(#kpro_MessageSetV1{messageV1_L = Encoded}) -> Encoded.
@@ -644,15 +643,15 @@ snappy_compress(IoData) ->
 
 snappy_decompress(BinData) ->
   {ok, Decompressed} = snappyer:decompress(BinData),
-  Decompressed.
+  Decompressed
 
 -else.
 
-snappy_compress(_IoData) ->
-  erlang:error(kafka_protocol_no_snappy).
-
-snappy_decompress(_BinData) ->
-  erlang:error(kafka_protocol_no_snappy).
+%%snappy_compress(_IoData) ->
+%%  erlang:error(kafka_protocol_no_snappy).
+%%
+%%snappy_decompress(_BinData) ->
+%%  erlang:error(kafka_protocol_no_snappy).
 
 -endif.
 
